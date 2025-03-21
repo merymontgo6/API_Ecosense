@@ -1,9 +1,10 @@
+from ast import Dict, List
 from fastapi import Query
 from client import db_client
-from typing import Optional
+from typing import Any, Optional
 
 # Consulta de todos los usuarios
-def fetch_all_usuaris():
+def fetch_all_usuaris() -> List[Dict[str, Any]]:
     try:
         conn = db_client()
         cur = conn.cursor()
@@ -29,7 +30,7 @@ def fetch_all_usuaris():
     return usuaris_list
 
 # Consulta de usuario por ID
-def fetch_usuari_by_id(id_usuari: int):
+def fetch_usuari_by_id(id_usuari: int) -> Dict[str, Any]:
     try:
         conn = db_client()
         cur = conn.cursor()
@@ -54,15 +55,36 @@ def fetch_usuari_by_id(id_usuari: int):
         conn.close()
     return usuari_dict
 
-# Consulta de sensor por ID con sus lecturas de humedad
-def fetch_sensor_data(sensor_id: int):
+def create_usuari(usuari: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        conn = db_client()
+        cur = conn.cursor()
+        
+        query = """
+            INSERT INTO usuaris (nom, cognom, email, contrasenya)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+        """
+        cur.execute(query, (usuari['nom'], usuari['cognom'], usuari['email'], usuari['contrasenya']))
+        usuari_id = cur.fetchone()[0]
+        conn.commit()
+        
+        return {**usuari, "id": usuari_id}
+    except pymysql.err.IntegrityError as e:
+        return {"status": -1, "message": "Email ya registrado"}
+    except Exception as e:
+        return {"status": -1, "message": f"Error de conexión: {e}"}
+    finally:
+        conn.close()
+        
+def fetch_sensor_data(sensor_id: int) -> Dict[str, Any]:
     try:
         conn = db_client()
         cur = conn.cursor()
         
         # Obtener información del sensor
         sensor_query = """
-        SELECT id, ubicacio, planta, estat, limit_humitat 
+        SELECT id, ubicacio, planta, estat 
         FROM sensors 
         WHERE id = %s
         """
@@ -74,7 +96,7 @@ def fetch_sensor_data(sensor_id: int):
         
         # Obtener últimas lecturas de humedad
         humitat_query = """
-        SELECT valor, timestamp 
+        SELECT id, valor, timestamp 
         FROM humitat_sol 
         WHERE sensor_id = %s 
         ORDER BY timestamp DESC 
@@ -83,27 +105,31 @@ def fetch_sensor_data(sensor_id: int):
         cur.execute(humitat_query, (sensor_id,))
         lecturas = cur.fetchall()
         
-        # Obtener alertas asociadas
-        alertes_query = """
-        SELECT timestamp, valor 
-        FROM alertes 
-        WHERE sensor_id = %s 
-        ORDER BY timestamp DESC 
-        LIMIT 10
+        # Obtener planta asociada
+        planta_query = """
+        SELECT id, nom 
+        FROM planta 
+        WHERE sensor_id = %s
         """
-        cur.execute(alertes_query, (sensor_id,))
-        alertas = cur.fetchall()
+        cur.execute(planta_query, (sensor_id,))
+        planta = cur.fetchone()
         
         response = {
             "sensor": {
                 "id": sensor[0],
                 "ubicacion": sensor[1],
                 "planta": sensor[2],
-                "estado": sensor[3],
-                "limite_humedad": sensor[4]
+                "estado": sensor[3]
             },
-            "lecturas": [{"valor": l[0], "timestamp": l[1]} for l in lecturas],
-            "alertas": [{"timestamp": a[0], "valor": a[1]} for a in alertas]
+            "lecturas": [{
+                "id": l[0],
+                "valor": l[1],
+                "timestamp": l[2].isoformat()
+            } for l in lecturas],
+            "planta": {
+                "id": planta[0],
+                "nom": planta[1]
+            } if planta else None
         }
         
     except Exception as e:
@@ -111,3 +137,69 @@ def fetch_sensor_data(sensor_id: int):
     finally:
         conn.close()
     return response
+
+def create_lectura(lectura: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        conn = db_client()
+        cur = conn.cursor()
+        
+        query = """
+            INSERT INTO humitat_sol (sensor_id, valor)
+            VALUES (%s, %s)
+            RETURNING id, timestamp
+        """
+        cur.execute(query, (lectura['sensor_id'], lectura['valor']))
+        lectura_id, timestamp = cur.fetchone()
+        conn.commit()
+        
+        return {
+            "id": lectura_id,
+            "sensor_id": lectura['sensor_id'],
+            "valor": lectura['valor'],
+            "timestamp": timestamp.isoformat()
+        }
+    except Exception as e:
+        return {"status": -1, "message": f"Error de conexión: {e}"}
+    finally:
+        conn.close()
+        
+def fetch_plantes() -> List[Dict[str, Any]]:
+    try:
+        conn = db_client()
+        cur = conn.cursor()
+        
+        query = "SELECT id, nom, sensor_id FROM planta"
+        cur.execute(query)
+        plantes = cur.fetchall()
+        
+        return [{
+            "id": p[0],
+            "nom": p[1],
+            "sensor_id": p[2]
+        } for p in plantes]
+    except Exception as e:
+        return {"status": -1, "message": f"Error de conexión: {e}"}
+    finally:
+        conn.close()
+        
+def create_planta(planta: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        conn = db_client()
+        cur = conn.cursor()
+        
+        query = """
+            INSERT INTO planta (nom, sensor_id)
+            VALUES (%s, %s)
+            RETURNING id
+        """
+        cur.execute(query, (planta['nom'], planta['sensor_id']))
+        planta_id = cur.fetchone()[0]
+        conn.commit()
+        
+        return {**planta, "id": planta_id}
+    except pymysql.err.IntegrityError as e:
+        return {"status": -1, "message": "Sensor ya asociado a otra planta"}
+    except Exception as e:
+        return {"status": -1, "message": f"Error de conexión: {e}"}
+    finally:
+        conn.close()
