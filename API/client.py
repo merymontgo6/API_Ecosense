@@ -3,11 +3,11 @@ import mysql.connector
 
 def db_client():
     try:
-        dbname = ""
-        user = ""
-        password = ""
-        host = ""
-        port = ""
+        dbname = "ecosense"
+        user = "root"
+        password = "1234"
+        host = "localhost"
+        port = "3306"
         collation = "utf8mb4_general_ci"
         
         return mysql.connector.connect(
