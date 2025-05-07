@@ -6,8 +6,15 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from client import db_client
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +43,7 @@ class Planta(BaseModel):
     ubicacio: str
     sensor_id: int
     usuari_id: Optional[int] = None
+    imagen_url: Optional[str] = None
     
 class Lectura(BaseModel):
     id: Optional[int] = None
@@ -115,6 +123,39 @@ def obtenir_usuari(usuari_id: int):
     finally:
         cursor.close()
         db.close()
+
+@app.post("/usuaris/login")
+def login_usuario(login_data: dict):
+    db = db_client()
+    cursor = db.cursor(dictionary=True)
+    try:
+        email = login_data.get("email")
+        contrasenya_plana = login_data.get("contrasenya")
+        
+        if not email or not contrasenya_plana:
+            raise HTTPException(status_code=400, detail="Email y contraseña son requeridos")
+        
+        cursor.execute("SELECT id, nom, cognom, email, contrasenya FROM usuaris WHERE email = %s", (email,))
+        usuario = cursor.fetchone()
+        
+        if not usuario:
+            return {"success": False, "message": "Usuario no encontrado"}
+        
+        # COMPARACIÓN DIRECTA (sin hashing - SOLO PARA PRUEBAS)
+        if contrasenya_plana != usuario['contrasenya']:
+            return {"success": False, "message": "Contraseña incorrecta"}
+        
+        return {
+            "success": True,
+            "usuari_id": usuario['id'],
+            "nom": usuario['nom'],
+            "email": usuario['email']
+        }
+    except mysql.connector.Error as err:
+        raise HTTPException(status_code=500, detail=str(err))
+    finally:
+        cursor.close()
+        db.close() 
 
 # Sensores Endpoints
 @app.post("/sensors/", response_model=Sensor)
@@ -343,8 +384,11 @@ def obtenir_planta(planta_id: int):
     try:
         cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
         planta = cursor.fetchone()
+
         if not planta:
             raise HTTPException(status_code=404, detail="Planta no trobada")
+        
+        planta["imagen_url"] = f"http://localhost:8000/static/plantas/{planta['nom']}.jpg"
         return planta
     finally:
         cursor.close()
