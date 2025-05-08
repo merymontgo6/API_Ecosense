@@ -9,12 +9,12 @@ from client import db_client
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
-
+from pydantic import BaseModel, EmailStr, field_validator
+import re
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,6 +57,24 @@ class UsuariCreate(BaseModel):
     email: str
     contrasenya: str
 
+    @field_validator('email')
+    def validate_email(cls, v):
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", v):
+            raise ValueError("El email no tiene un formato válido")
+        return v.lower()
+
+    @field_validator('nom', 'cognom')
+    def validate_names(cls, v):
+        if len(v) < 2:
+            raise ValueError("El nom i cognom han de tenir al menys 2 caracters")
+        return v.title()
+
+    @field_validator('contrasenya')
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError("La contrasenya ha de tenir al menys 6 caracters")
+        return v
+
 class SensorCreate(BaseModel):
     sensor_id: int
     estat: Optional[str] = "Actiu"
@@ -72,6 +90,21 @@ class PlantaCreate(BaseModel):
 class LecturaCreate(BaseModel):
     sensor_id: int
     valor: float
+    
+class RegistreResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
+    usuari_id: Optional[int] = None
+    nom: Optional[str] = None
+    email: Optional[str] = None
+
+class LoginResponse(BaseModel):
+    success: bool
+    message: Optional[str] = None
+    usuari_id: Optional[int] = None
+    nom: Optional[str] = None
+    email: Optional[str] = None
+
 
 # Endpoints
 @app.get("/")
@@ -124,7 +157,7 @@ def obtenir_usuari(usuari_id: int):
         cursor.close()
         db.close()
 
-@app.post("/usuaris/login")
+@app.post("/usuaris/login", response_model=LoginResponse)
 def login_usuario(login_data: dict):
     db = db_client()
     cursor = db.cursor(dictionary=True)
@@ -133,29 +166,64 @@ def login_usuario(login_data: dict):
         contrasenya_plana = login_data.get("contrasenya")
         
         if not email or not contrasenya_plana:
-            raise HTTPException(status_code=400, detail="Email y contraseña son requeridos")
+            return {"success": False, "message": "Email y contraseña son requeridos"}
         
-        cursor.execute("SELECT id, nom, cognom, email, contrasenya FROM usuaris WHERE email = %s", (email,))
+        cursor.execute("""SELECT id, nom, cognom, email, contrasenya FROM usuaris WHERE email = %s""", (email,))
         usuario = cursor.fetchone()
-        
+    
         if not usuario:
             return {"success": False, "message": "Usuario no encontrado"}
         
-        # COMPARACIÓN DIRECTA (sin hashing - SOLO PARA PRUEBAS)
-        if contrasenya_plana != usuario['contrasenya']:
-            return {"success": False, "message": "Contraseña incorrecta"}
+        # Intento 1: Verificar con contraseña hasheada
+        try:
+            if pwd_context.verify(contrasenya_plana, usuario['contrasenya']):
+                return {"success": True, "usuari_id": usuario['id'], "nom": usuario['nom'], "email": usuario['email'] }
+        except ValueError:
+            pass
         
-        return {
-            "success": True,
-            "usuari_id": usuario['id'],
-            "nom": usuario['nom'],
-            "email": usuario['email']
-        }
+        # Intento 2: Comparación directa para contraseñas antiguas sin hash
+        if contrasenya_plana == usuario['contrasenya']:
+            # Actualizar la contraseña a formato hasheado
+            hashed_password = pwd_context.hash(contrasenya_plana)
+            cursor.execute("""UPDATE usuaris SET contrasenya = %s WHERE id = %s""", (hashed_password, usuario['id']))
+            db.commit()
+            
+            return { "success": True, "usuari_id": usuario['id'], "nom": usuario['nom'], "email": usuario['email'] }
+        
+        # Si ambos intentos fallan
+        return { "success": False, "message": "Contrasenya incorrecta" }
+        
     except mysql.connector.Error as err:
-        raise HTTPException(status_code=500, detail=str(err))
+        return {"success": False, "message": f"Error de base de datos: {str(err)}" }
     finally:
         cursor.close()
-        db.close() 
+        db.close()
+
+@app.post("/usuaris/registre", response_model=RegistreResponse)
+def registrar_usuari(usuari: UsuariCreate):
+    db = db_client()    
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT id FROM usuaris WHERE email = %s", (usuari.email,))
+        if cursor.fetchone():
+            return {"success": False, "message": "El correu ja existeix"}
+
+        hashed_password = pwd_context.hash(usuari.contrasenya)
+
+        query = """INSERT INTO usuaris (nom, cognom, email, contrasenya) VALUES (%s, %s, %s, %s)"""
+        cursor.execute(query, ( usuari.nom, usuari.cognom, usuari.email, hashed_password))
+        db.commit()
+        
+        user_id = cursor.lastrowid
+        
+        return {"success": True, "message": "Usuari registrat amb éxit", "usuari_id": user_id, "nom": usuari.nom, "email": usuari.email }
+        
+    except mysql.connector.Error as err:
+        db.rollback()
+        return {"success": False, "message": f"Error de base de datos: {str(err)}" }
+    finally:
+        cursor.close()
+        db.close()
 
 # Sensores Endpoints
 @app.post("/sensors/", response_model=Sensor)
