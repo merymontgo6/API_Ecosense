@@ -13,6 +13,8 @@ from pydantic import BaseModel, EmailStr, field_validator
 import re
 
 app = FastAPI()
+#BASE_URL = "http://192.168.17.240:8000"
+BASE_URL = "http://18.213.199.248:8000"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -44,7 +46,15 @@ class Planta(BaseModel):
     sensor_id: int
     usuari_id: Optional[int] = None
     imagen_url: Optional[str] = None
+
+class PlantaUpdate(BaseModel):
+    nom: Optional[str] = None
+    ubicacio: Optional[str] = None
+    sensor_id: Optional[int] = None
+    usuari_id: Optional[int] = None
+    imagen_url: Optional[str] = None
     
+
 class Lectura(BaseModel):
     id: Optional[int] = None
     sensor_id: int
@@ -86,6 +96,7 @@ class PlantaCreate(BaseModel):
     ubicacio: str
     sensor_id: int
     usuari_id: Optional[int] = None
+    imagen_url: Optional[str] = None
 
 class LecturaCreate(BaseModel):
     sensor_id: int
@@ -371,38 +382,46 @@ def listar_lectures(
         db.close()
 
 # Plantas Endpoints
-@app.post("/plantes/", response_model=Planta)
-def crear_planta(planta: PlantaCreate):
-    db = db_client()    
-    cursor = db.cursor(dictionary=True)
-    try:
-        query = """
-        INSERT INTO planta (id, nom, ubicacio, sensor_id, usuari_id)
-        VALUES (%s, %s, %s, %s, %s)
-        """
-        cursor.execute(query, (
-            planta.id, 
-            planta.nom, 
-            planta.ubicacio,
-            planta.sensor_id,
-            planta.usuari_id
-        ))
-        db.commit()
-        cursor.execute("SELECT * FROM planta WHERE id = %s", (planta.id,))
-        return cursor.fetchone()
-    except mysql.connector.Error as err:
-        raise HTTPException(status_code=400, detail=str(err))
-    finally:
-        cursor.close()
-        db.close()
-
 @app.get("/plantes/", response_model=List[Planta])
 def listar_plantes():
     db = db_client()    
     cursor = db.cursor(dictionary=True)
     try:
         cursor.execute("SELECT * FROM planta")
-        return cursor.fetchall()
+        plantas = cursor.fetchall()
+        for planta in plantas:
+            if not planta.get('imagen_url'):
+                planta['imagen_url'] = f"{BASE_URL}/static/plantas/{planta['nom']}.jpg"
+        return plantas
+    finally:
+        cursor.close()
+        db.close()
+        
+@app.post("/plantes/", response_model=Planta)
+def crear_planta(planta: PlantaCreate):
+    db = db_client()    
+    cursor = db.cursor(dictionary=True)
+    try:
+        query = """
+        INSERT INTO planta (nom, ubicacio, sensor_id, usuari_id, imagen_url)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        cursor.execute(query, (
+            planta.nom, 
+            planta.ubicacio,
+            planta.sensor_id,
+            planta.usuari_id,
+            planta.imagen_url
+        ))
+        db.commit()
+        planta_id = cursor.lastrowid
+        cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
+        new_planta = cursor.fetchone()
+        if not new_planta['imagen_url']:
+            new_planta['imagen_url'] = f"{BASE_URL}/static/plantas/{new_planta['nom']}.jpg"
+        return new_planta
+    except mysql.connector.Error as err:
+        raise HTTPException(status_code=400, detail=str(err))
     finally:
         cursor.close()
         db.close()
@@ -420,7 +439,7 @@ def get_plantas_agrupadas_por_zones(usuari_id: int):
     cursor = db.cursor(dictionary=True)
     try:
         cursor.execute("""
-            SELECT id, nom, ubicacio, sensor_id, usuari_id 
+            SELECT id, nom, ubicacio, sensor_id, usuari_id, imagen_url 
             FROM planta
             WHERE usuari_id = %s
             ORDER BY ubicacio, nom
@@ -428,12 +447,14 @@ def get_plantas_agrupadas_por_zones(usuari_id: int):
         
         plantas = cursor.fetchall()
         
-        # Agrupar por zona
+        for planta in plantas:
+            if not planta.get('imagen_url'):
+                planta['imagen_url'] = f"{BASE_URL}/static/plantas/{planta['nom']}.jpg"
+        
         plantas_por_zona = defaultdict(list)
         for planta in plantas:
             plantas_por_zona[planta['ubicacio']].append(planta)
             
-        # Convertir a la estructura de respuesta
         return [
             {"zona": zona, "plantas": plantas}
             for zona, plantas in plantas_por_zona.items()
@@ -444,7 +465,7 @@ def get_plantas_agrupadas_por_zones(usuari_id: int):
     finally:
         cursor.close()
         db.close()
-
+        
 @app.get("/plantes/{planta_id}", response_model=Planta)
 def obtenir_planta(planta_id: int):
     db = db_client()    
@@ -456,39 +477,58 @@ def obtenir_planta(planta_id: int):
         if not planta:
             raise HTTPException(status_code=404, detail="Planta no trobada")
         
-        planta["imagen_url"] = f"http://localhost:8000/static/plantas/{planta['nom']}.jpg"
+        if not planta.get('imagen_url'):
+            planta["imagen_url"] = f"{BASE_URL}/static/plantas/{planta['nom']}.jpg"
         return planta
     finally:
         cursor.close()
         db.close()
 
+
 @app.put("/plantes/{planta_id}", response_model=Planta)
-def actualitzar_planta(planta_id: int, planta: PlantaCreate):
+def actualitzar_planta(planta_id: int, planta: PlantaUpdate):
     db = db_client()    
     cursor = db.cursor(dictionary=True)
     try:
+        cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
+        current_planta = cursor.fetchone()
+        if not current_planta:
+            raise HTTPException(status_code=404, detail="Planta no encontrada")
+        
+        update_data = {
+            'nom': planta.nom if planta.nom is not None else current_planta['nom'],
+            'ubicacio': planta.ubicacio if planta.ubicacio is not None else current_planta['ubicacio'],
+            'sensor_id': planta.sensor_id if planta.sensor_id is not None else current_planta['sensor_id'],
+            'usuari_id': planta.usuari_id if planta.usuari_id is not None else current_planta['usuari_id'],
+            'imagen_url': planta.imagen_url if planta.imagen_url is not None else current_planta['imagen_url']
+        }
+
         query = """
         UPDATE planta 
-        SET nom = %s, ubicacio = %s, sensor_id = %s, usuari_id = %s
+        SET nom = %s, ubicacio = %s, sensor_id = %s, usuari_id = %s, imagen_url = %s
         WHERE id = %s
         """
         cursor.execute(query, (
-            planta.nom,
-            planta.ubicacio,
-            planta.sensor_id,
-            planta.usuari_id,
+            update_data['nom'],
+            update_data['ubicacio'],
+            update_data['sensor_id'],
+            update_data['usuari_id'],
+            update_data['imagen_url'],
             planta_id
         ))
-        if cursor.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Planta no encontrada")
         db.commit()
         cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
-        return cursor.fetchone()
+        updated_planta = cursor.fetchone()
+        # Ensure image URL exists
+        if not updated_planta.get('imagen_url'):
+            updated_planta['imagen_url'] = f"{BASE_URL}/static/plantas/{updated_planta['nom']}.jpg"
+        return updated_planta
     except mysql.connector.Error as err:
         raise HTTPException(status_code=400, detail=str(err))
     finally:
         cursor.close()
         db.close()
+        
 
 @app.delete("/plantes/{planta_id}")
 def eliminar_planta(planta_id: int):
@@ -505,4 +545,3 @@ def eliminar_planta(planta_id: int):
     finally:
         cursor.close()
         db.close()
-        
