@@ -105,7 +105,10 @@ class LecturaCreate(BaseModel):
 class HumitatResponse(BaseModel):
     sensor_id: int
     valor: float
-    timestamp: str
+    timestamp: datetime
+    
+class HumitatValorResponse(BaseModel):
+    valor: float
     
 class RegistreResponse(BaseModel):
     success: bool
@@ -348,7 +351,7 @@ def listar_lectures(
         cursor.close()
         db.close()
 
-@app.get("/humitat/{sensor_id}", response_model=HumitatResponse)
+@app.get("/humitat/{sensor_id}", response_model=HumitatValorResponse)
 def get_humitat_actual(sensor_id: int):
     db = db_client()
     cursor = db.cursor(dictionary=True)
@@ -370,11 +373,7 @@ def get_humitat_actual(sensor_id: int):
         
         if not result:
             # Return default values when no data exists
-            return {
-                "sensor_id": sensor_id,
-                "valor": 0.0,
-                "timestamp": datetime.now().isoformat()
-            }
+            return {"valor": result["valor"]}
             
         return result
     except Exception as e:
