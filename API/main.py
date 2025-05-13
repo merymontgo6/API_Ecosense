@@ -13,8 +13,9 @@ from pydantic import BaseModel, EmailStr, field_validator
 import re
 
 app = FastAPI()
+BASE_URL = "http://192.168.5.206:8000"
 #BASE_URL = "http://192.168.17.240:8000"
-BASE_URL = "http://18.213.199.248:8000"
+#BASE_URL = "http://18.213.199.248:8000"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -91,7 +92,6 @@ class SensorCreate(BaseModel):
     usuari_id: Optional[int] = None
 
 class PlantaCreate(BaseModel):
-    id: int
     nom: str
     ubicacio: str
     sensor_id: int
@@ -101,6 +101,11 @@ class PlantaCreate(BaseModel):
 class LecturaCreate(BaseModel):
     sensor_id: int
     valor: float
+    
+class HumitatResponse(BaseModel):
+    sensor_id: int
+    valor: float
+    timestamp: str
     
 class RegistreResponse(BaseModel):
     success: bool
@@ -123,25 +128,6 @@ def read_root():
     return {"ECOSENSE API"}
 
 # Usuarios Endpoints
-@app.post("/usuaris/", response_model=Usuari)
-def crear_usuari(usuari: UsuariCreate):
-    db = db_client()    
-    cursor = db.cursor(dictionary=True)
-    try:
-        query = """
-        INSERT INTO usuaris (nom, cognom, email, contrasenya)
-        VALUES (%s, %s, %s, %s)
-        """
-        cursor.execute(query, (usuari.nom, usuari.cognom, usuari.email, usuari.contrasenya))
-        db.commit()
-        user_id = cursor.lastrowid
-        cursor.execute("SELECT * FROM usuaris WHERE id = %s", (user_id,))
-        return cursor.fetchone()
-    except mysql.connector.Error as err:
-        raise HTTPException(status_code=400, detail=str(err))
-    finally:
-        cursor.close()
-        db.close()
 
 @app.get("/usuaris/", response_model=List[Usuari])
 def listar_usuaris():
@@ -323,25 +309,6 @@ def eliminar_sensor(sensor_id: int):
         db.close()
 
 # Lecturas Endpoints
-@app.post("/lectures/", response_model=Lectura)
-def crear_lectura(lectura: LecturaCreate):
-    db = db_client()    
-    cursor = db.cursor(dictionary=True)
-    try:
-        query = """
-        INSERT INTO humitat_sol (sensor_id, valor)
-        VALUES (%s, %s)
-        """
-        cursor.execute(query, (lectura.sensor_id, lectura.valor))
-        db.commit()
-        lectura_id = cursor.lastrowid
-        cursor.execute("SELECT * FROM humitat_sol WHERE id = %s", (lectura_id,))
-        return cursor.fetchone()
-    except mysql.connector.Error as err:
-        raise HTTPException(status_code=400, detail=str(err))
-    finally:
-        cursor.close()
-        db.close()
 
 @app.get("/lectures/", response_model=List[Lectura])
 def listar_lectures(
@@ -381,6 +348,41 @@ def listar_lectures(
         cursor.close()
         db.close()
 
+@app.get("/humitat/{sensor_id}", response_model=HumitatResponse)
+def get_humitat_actual(sensor_id: int):
+    db = db_client()
+    cursor = db.cursor(dictionary=True)
+    try:
+        # First check if sensor exists
+        cursor.execute("SELECT * FROM sensors WHERE sensor_id = %s", (sensor_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Sensor no encontrado")
+            
+        query = """
+        SELECT sensor_id, valor, timestamp 
+        FROM humitat_sol 
+        WHERE sensor_id = %s 
+        ORDER BY timestamp DESC 
+        LIMIT 1
+        """
+        cursor.execute(query, (sensor_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            # Return default values when no data exists
+            return {
+                "sensor_id": sensor_id,
+                "valor": 0.0,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        db.close()
+        
 # Plantas Endpoints
 @app.get("/plantes/", response_model=List[Planta])
 def listar_plantes():
@@ -402,6 +404,15 @@ def crear_planta(planta: PlantaCreate):
     db = db_client()    
     cursor = db.cursor(dictionary=True)
     try:
+        cursor.execute("SELECT * FROM sensors WHERE sensor_id = %s", (planta.sensor_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=400, detail="El sensor especificado no existe")
+        
+        if planta.usuari_id:
+            cursor.execute("SELECT * FROM usuaris WHERE id = %s", (planta.usuari_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=400, detail="El usuario especificado no existe")
+        
         query = """
         INSERT INTO planta (nom, ubicacio, sensor_id, usuari_id, imagen_url)
         VALUES (%s, %s, %s, %s, %s)
@@ -415,12 +426,15 @@ def crear_planta(planta: PlantaCreate):
         ))
         db.commit()
         planta_id = cursor.lastrowid
+        
         cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
         new_planta = cursor.fetchone()
-        if not new_planta['imagen_url']:
-            new_planta['imagen_url'] = f"{BASE_URL}/static/plantas/{new_planta['nom']}.jpg"
+        if not new_planta:
+            raise HTTPException(status_code=500, detail="Error al recuperar la planta creada")
+            
         return new_planta
     except mysql.connector.Error as err:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(err))
     finally:
         cursor.close()
