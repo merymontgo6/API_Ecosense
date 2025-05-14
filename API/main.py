@@ -505,8 +505,7 @@ def actualitzar_planta(planta_id: int, planta: PlantaUpdate):
     try:
         cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
         current_planta = cursor.fetchone()
-        if not current_planta:
-            raise HTTPException(status_code=404, detail="Planta no encontrada")
+        if not current_planta: raise HTTPException(status_code=404, detail="Planta no encontrada")
         
         update_data = {
             'nom': planta.nom if planta.nom is not None else current_planta['nom'],
@@ -516,11 +515,7 @@ def actualitzar_planta(planta_id: int, planta: PlantaUpdate):
             'imagen_url': planta.imagen_url if planta.imagen_url is not None else current_planta['imagen_url']
         }
 
-        query = """
-        UPDATE planta 
-        SET nom = %s, ubicacio = %s, sensor_id = %s, usuari_id = %s, imagen_url = %s
-        WHERE id = %s
-        """
+        query = """UPDATE planta SET nom = %s, ubicacio = %s, sensor_id = %s, usuari_id = %s, imagen_url = %s WHERE id = %s"""
         cursor.execute(query, (
             update_data['nom'],
             update_data['ubicacio'],
@@ -532,9 +527,7 @@ def actualitzar_planta(planta_id: int, planta: PlantaUpdate):
         db.commit()
         cursor.execute("SELECT * FROM planta WHERE id = %s", (planta_id,))
         updated_planta = cursor.fetchone()
-        # Ensure image URL exists
-        if not updated_planta.get('imagen_url'):
-            updated_planta['imagen_url'] = f"{BASE_URL}/static/plantas/{updated_planta['nom']}.jpg"
+        if not updated_planta.get('imagen_url'): updated_planta['imagen_url'] = f"{BASE_URL}/static/plantas/{updated_planta['nom']}.jpg"
         return updated_planta
     except mysql.connector.Error as err:
         raise HTTPException(status_code=400, detail=str(err))
