@@ -103,12 +103,12 @@ class LecturaCreate(BaseModel):
     valor: float
     
 class HumitatResponse(BaseModel):
-    sensor_id: int
-    valor: float
-    timestamp: datetime
+    id: Optional[int] = None
+    valor: Optional[float] = None
+    timestamp: Optional[datetime] = None
     
 class HumitatValorResponse(BaseModel):
-    valor: float
+    valor: float    
     
 class RegistreResponse(BaseModel):
     success: bool
@@ -498,6 +498,74 @@ def obtenir_planta(planta_id: int):
         db.close()
 
 
+@app.get("/plantes/complet/{planta_id}")
+def obtenir_planta_completa(planta_id: int):
+    db = db_client()
+    cursor = db.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT 
+                p.id AS planta_id,
+                p.nom AS planta_nom,
+                p.ubicacio,
+                p.imagen_url,
+                s.sensor_id,
+                s.estat AS sensor_estat,
+                hs.id AS humitat_id,
+                hs.valor AS humitat_valor,
+                hs.timestamp AS humitat_timestamp
+            FROM planta p
+            LEFT JOIN sensors s ON p.sensor_id = s.sensor_id
+            LEFT JOIN humitat_sol hs ON s.sensor_id = hs.sensor_id
+            WHERE p.id = %s
+            ORDER BY hs.timestamp DESC
+            LIMIT 1
+        """, (planta_id,))
+
+        result = cursor.fetchone()
+        print("RESULTAT QUERY:", result)
+
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Planta con ID {planta_id} no encontrada")
+
+        planta = Planta(
+            id=result["planta_id"],
+            nom=result["planta_nom"],
+            ubicacio=result["ubicacio"],
+            sensor_id=result["sensor_id"],
+            imagen_url=result["imagen_url"]
+        )
+
+        sensor = Sensor(
+            sensor_id=result["sensor_id"],
+            estat=result["sensor_estat"]
+        )
+
+        humitat = HumitatValorResponse(valor=result["humitat_valor"])
+
+        return {
+            "id": result["planta_id"],
+            "nom": result["planta_nom"],
+            "ubicacio": result["ubicacio"],
+            "imagen_url": result["imagen_url"],
+            "sensor_id": result["sensor_id"],
+            "sensor_estat": result["sensor_estat"],
+            "humitat_valor": result["humitat_valor"],
+            "humitat_timestamp": result["humitat_timestamp"],
+            "estat_planta": "actiu"
+        }
+
+    except mysql.connector.Error as err:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error de base de datos: {str(err)}. Parámetros usados: {planta_id}"
+        )
+
+    finally:
+        cursor.close()
+        db.close()
+        
 @app.put("/plantes/{planta_id}", response_model=Planta)
 def actualitzar_planta(planta_id: int, planta: PlantaUpdate):
     db = db_client()    
