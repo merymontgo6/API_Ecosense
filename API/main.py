@@ -13,9 +13,9 @@ from pydantic import BaseModel, EmailStr, field_validator
 import re
 
 app = FastAPI()
-BASE_URL = "http://192.168.5.206:8000"
-#BASE_URL = "http://192.168.17.240:8000"
-#BASE_URL = "http://18.213.199.248:8000"
+#BASE_URL = "http://192.168.5.206:8000"
+#BASE_URL = "http://192.168.17.240:8000
+BASE_URL = "http://18.213.199.248:8000"
 app.mount("/static", StaticFiles(directory="static"), name="static")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -108,7 +108,7 @@ class HumitatResponse(BaseModel):
     timestamp: Optional[datetime] = None
     
 class HumitatValorResponse(BaseModel):
-    valor: float    
+    valor: Optional[float] = None    
     
 class RegistreResponse(BaseModel):
     success: bool
