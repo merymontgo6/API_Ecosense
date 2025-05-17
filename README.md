@@ -3,7 +3,18 @@
 ## Fet per Karolayn Muñoz
 
 ### Endpoints de l'API
-L’API proporciona els següents endpoints:
+L'API d'ECOSENSE, dissenyada per a l'aplicació mòbil, centralitza la comunicació amb els sensors i la base de dades. Les seves funcionalitats principals inclouen:
+
+Gestió de plantes:
+POST/UPDATE/DELETE /plants: Afegeix, actualitza o elimina plantes monitoritzades.
+
+Gestió de usuaris:
+POST/UPDATE/DELETE /plants: Afegeix, actualitza o elimina usuaris.
+
+Gestió de sensors:
+POST/UPDATE/DELETE /plants: Afegeix, actualitza o elimina plantes monitoritzades.
+
+L'API d'Ecosense té els seguents endpoints:
 
 ![alt text](images/image.png)
 
